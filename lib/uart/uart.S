@@ -1,76 +1,70 @@
-/* half-duplex 81N serial uart in hand-tuned assembler
- * 1%/2% Tx/Rx timing error for 115.2kbps@8Mhz
- * 2%/1% Tx/Rx timing error for 230.4kbps@8Mhz
- * optimized for no jitter vs AVR305 with 1 cycle/bit jitter
- * @author: Ralph Doncaster
+/* optimized half-duplex serial uart implementation - 27 instructions
+ * @author: Ralph Doncaster 2014
  * @version: $Id$
  */
 
-#define delayCount r18
+/* needed for <avr/io.h> to give io constant addresses */
+#define __SFR_OFFSET 0
 #include <avr/io.h>
-; correct for avr/io.h 0x20 port offset for io instructions
-#define UART_Port (PORTB-0x20)
-#define UART_Tx PB3
-#define UART_Rx PB3
 
-; Supports using only one pin on the AVR for both Tx and Rx
-;              D1
-;  AVR ----+--|>|-----+----- Tx
-;          |      10K $ R1
-;          +--------(/^\)--- Rx
-;               NPN E   C
+#ifdef PORTD
+#define UART_Port PORTD
+#else
+#define UART_Port PORTB
+#endif
+#define UART_Tx 3
+#define UART_Rx 3
 
-.global TxTimedByte
-; transmit byte in r24 with bit delay in r22 - 15 instructions
-; calling code must set Tx line to idle state (high) or 1st byte may be lost
-; i.e. PORTB |= (1<<UART_Tx)
-TxTimedByte:
-	cli
-        sbi UART_Port-1, UART_Tx        ; set Tx line to output
-        cbi UART_Port, UART_Tx          ; start bit
+#define delayArg r22
+
+.extern TXDELAY
+.extern RXSTART
+.extern RXDELAY
+
+.section .text.transmit,"ax",@progbits
+; transmit byte contained in r24
+; AVR305 has 1 cycle of jitter per bit, this has none
+.global TxByte
+TxByte:
+	sbi UART_Port-1, UART_Tx		; set Tx line to output
+	cbi UART_Port, UART_Tx			; start bit
 	in r0, UART_Port
-	ldi r25, 3                      ; stop bit + idle state
+	ldi r25, 7						; stop bit & idle state
 TxLoop:
-        ; 8 cycle loop + delay - total = 7 + 3*r22
-	mov delayCount, r22
+	; 8 cycle loop + delay = 7 + 3*DelayArg
+	ldi delayArg, TXDELAY
 TxDelay:
-; delay (3 cycle * delayCount) -1
-        dec delayCount
-        brne TxDelay
-	bst r24, 0			; store lsb in T
+    dec delayArg
+	brne TxDelay
+	bst r24, 0						; store lsb in T
 	bld r0, UART_Tx
 	lsr r25
-	ror r24
+	ror r24							; 2-byte shift register
 	out UART_Port, r0
-        brne TxLoop
-	reti				; return and enable interrupts
+	brne TxLoop
+	ret
 
-
-.global RxTimedByte
-; receive byte into r24 with bit delay in r22 & R24 - 16 instructions
-RxTimedByte:
-        cbi UART_Port-1, UART_Rx  	; set Rx line to input
-#ifdef RX_PULLUP
-        sbi UART_Port, UART_Rx  	; enable pullup
-#endif
-	mov delayCount, r24		; 1.5 bit delay
-	ldi r24, 0x80 			; bit shift counter
-WaitStart:
-	sbic UART_Port-2, UART_Rx 	; wait for start edge
-	rjmp WaitStart
-	cli
+.section .text.receive,"ax",@progbits
+; receive byte into r24
+.global RxByte
+RxByte:
+	sbic UART_Port-2, UART_Rx		; wait for start edge
+	rjmp RxByte
+	ldi r24, 0x80					; bit shift counter
+	ldi delayArg, RXSTART			; 1.5 bit delay
 RxBit:
-        ; 6 cycle loop + delay - total = 5 + 3*r22
-; delay (3 cycle * delayCount) -1 and clear carry with subi
-        subi delayCount, 1
-        brne RxBit
-	mov delayCount, r22
-	sbic UART_Port-2, UART_Rx	; check UART PIN
-	sec
-	ror r24
+	; 7 cycle loop + delay = 7 + 6 + 3*DelayArg
+	rcall Delay3Cycle				; delay and clear carry
+	ldi delayArg, RXDELAY
+	lsr r24
+	sbic UART_Port-2, UART_Rx
+	ori r24, 0x80
+    nop                             ; match 7-cycle Tx loop
 	brcc RxBit
-StopBit:
-        dec delayCount
-        brne StopBit
-	reti				; return and enable interrupts
+	; fall into delay for stop bit
 
+; delay (3 cycle * delayArg) -1 + 4 cycles (ret instruction)
+Delay3Cycle:
+	dec delayArg
+	brne Delay3Cycle
+	ret

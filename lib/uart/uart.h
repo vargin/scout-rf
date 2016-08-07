@@ -1,29 +1,71 @@
-/* Optimized half-duplex serial uart implementation
- * timing within 2% using at 230.4kbps @ 8Mhz 
- * @author: Ralph Doncaster
+/* optimized half-duplex high-speed serial uart implementation
+ * @author: Ralph Doncaster 2014
  * @version: $Id$
+ * soft UART has only 0.8% timing error at default 115200 baud rate @8Mhz
+ * and 2.1% timing error at 230400.
+ * To use UART, include BBUart.h in your C program, compile BBUart.S,
+ * and link BBUart.o with your program.
+ *
+ * define BAUD_RATE before including BBUart.h to change default baud rate
  */
 
-#define BAUD_RATE 115200
-
-#ifdef F_CPU
-  /* account for integer truncation by adding 3/2 = 1.5 */
-  #define TXDELAY (((F_CPU/BAUD_RATE)-7 +1.5)/3)
-  #define RXDELAY (((F_CPU/BAUD_RATE)-5 +1.5)/3)
-  #define RXROUNDED (((F_CPU/BAUD_RATE)-5 +2)/3)
-#else
-  #error CPU frequency F_CPU undefined
+#ifndef F_CPU
+#error F_CPU undefined
 #endif
 
-#if RXROUNDED > 127
-  #error low baud rates unsupported - use higher BAUD_RATE
-#endif
-
+#ifdef __cplusplus
 extern "C" {
-void TxTimedByte(char, char);
-char RxTimedByte(char, char); /* 1.5 bit delay, 1 bit delay */
+#endif
+void TxByte(unsigned char);
+unsigned char RxByte();
+#ifdef __cplusplus
 }
+#endif
 
-#define TxByte(C) TxTimedByte(C , TXDELAY)
-#define RxByte() RxTimedByte((RXDELAY*1.5)-2.5, RXDELAY)
+#define STR1(x) #x
+#define STR(x) STR1(x)
+
+#ifndef BAUD_RATE
+// default baud rate
+#define BAUD_RATE 115200
+#endif
+
+#define DIVIDE_ROUNDED(NUMERATOR, DIVISOR) ((((2*(NUMERATOR))/(DIVISOR))+1)/2)
+
+// txbit takes 3*RXDELAY + 15 cycles
+#define BIT_CYCLES DIVIDE_ROUNDED(F_CPU,BAUD_RATE)
+#define TXDELAYCOUNT DIVIDE_ROUNDED(BIT_CYCLES - 7, 3)
+
+#define RXSTART_CYCLES DIVIDE_ROUNDED(3*F_CPU,2*BAUD_RATE)
+// 1st bit sampled 3*RXDELAY + 11 cycles after start bit begins
+#define RXSTARTCOUNT DIVIDE_ROUNDED(RXSTART_CYCLES - 13, 3)
+// rxbit takes 3*RXDELAY + 12 cycles
+#define RXDELAYCOUNT DIVIDE_ROUNDED(BIT_CYCLES - 13, 3)
+
+#if ( RXSTARTCOUNT > 255 )
+#error baud rate too low - must be >= 19200 @ 8Mhz, 2400 @ 1Mhz
+#endif
+
+asm(".global TXDELAY" );
+asm(".global RXSTART" );
+asm(".global RXDELAY" );
+
+// dummy function defines no code
+// hack to define absolute linker symbols using C macro calculations
+static void dummy() __attribute__ ((naked));
+static void dummy() __attribute__ ((used));
+static void dummy(){
+  asm (
+  ".equ TXDELAY, %[txdcount]\n"
+  ::[txdcount] "M" (TXDELAYCOUNT)
+  );
+  asm (
+  ".equ RXSTART, %[rxscount]\n"
+  ::[rxscount] "M" (RXSTARTCOUNT)
+  );
+  asm (
+  ".equ RXDELAY, %[rxdcount]\n"
+  ::[rxdcount] "M" (RXDELAYCOUNT)
+  );
+}
 
