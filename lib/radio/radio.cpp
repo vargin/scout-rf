@@ -275,7 +275,6 @@ bool Radio::writeFast(const void *buf, uint8_t len, const bool multicast) {
     }
   }
 
-  //Start Writing
   write_payload(buf, len, multicast ? W_TX_PAYLOAD_NO_ACK : W_TX_PAYLOAD);
 
   return 1;
@@ -284,6 +283,70 @@ bool Radio::writeFast(const void *buf, uint8_t len, const bool multicast) {
 bool Radio::writeFast(const void *buf, uint8_t len) {
   return writeFast(buf, len, 0);
 }
+
+//For general use, the interrupt flags are not important to clear
+bool Radio::writeBlocking(const void *buf, uint8_t len, uint32_t timeout) {
+  //Block until the FIFO is NOT full.
+  //Keep track of the MAX retries and set auto-retry if seeing failures
+  //This way the FIFO will fill up and allow blocking until packets go through
+  //The radio will auto-clear everything in the FIFO as long as CE remains high
+
+  uint32_t elapsed = 0;
+
+  // Blocking only if FIFO is full. This will loop and block until TX is successful or timeout.
+  while ((get_status() & (_BV(TX_FULL)))) {
+    // If MAX Retries have been reached.
+    if (get_status() & _BV(MAX_RT)) {
+      // Set re-transmit and clear the MAX_RT interrupt flag.
+      reUseTX();
+
+      //If this payload has exceeded the user-defined timeout, exit and return 0.
+      if (elapsed > timeout) {
+        return 0;
+      }
+    }
+
+    _delay_ms(100);
+    elapsed += 100;
+  }
+
+  write_payload(buf, len, W_TX_PAYLOAD);
+
+  return 1;
+}
+
+bool Radio::txStandBy() {
+  while (!(read_register(FIFO_STATUS) & _BV(TX_EMPTY))) {
+    if (get_status() & _BV(MAX_RT)) {
+      write_register(STATUS, _BV(MAX_RT));
+      //Non blocking, flush the data
+      flush_tx();
+      return 0;
+    }
+  }
+
+  return 1;
+}
+
+bool Radio::txStandBy(uint32_t timeout) {
+  uint32_t elapsed = 0;
+
+  while (!(read_register(FIFO_STATUS) & _BV(TX_EMPTY))) {
+    if (get_status() & _BV(MAX_RT)) {
+      write_register(STATUS, _BV(MAX_RT));
+      if (elapsed >= timeout) {
+        flush_tx();
+        return 0;
+      }
+    }
+
+    elapsed += 200;
+    _delay_ms(200);
+  }
+
+  return 1;
+}
+
 
 void Radio::csnLow(void) {
   // Discharge SCK->CSN RC.
@@ -315,4 +378,12 @@ uint8_t Radio::flush_tx(void) {
   csnHigh();
 
   return status;
+}
+
+void Radio::reUseTX() {
+  // Clear max retry flag.
+  write_register(STATUS, _BV(MAX_RT));
+  csnLow();
+  spi_byte(REUSE_TX_PL);
+  csnHigh();
 }

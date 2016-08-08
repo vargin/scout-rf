@@ -237,6 +237,35 @@ public:
   bool writeFast(const void* buf, uint8_t len, const bool multicast);
 
   /**
+   * This function extends the auto-retry mechanism to any specified duration.
+   * It will not block until the 3 FIFO buffers are filled with data.
+   * If so the library will auto retry until a new payload is written
+   * or the user specified timeout period is reached.
+   * @warning It is important to never keep the nRF24L01 in TX mode and FIFO full for more than 4ms at a time. If the
+   * auto retransmit is enabled, the nRF24L01 is never in TX mode long enough to disobey this rule. Allow the FIFO
+   * to clear by issuing txStandBy() or ensure appropriate time between transmissions.
+   *
+   * @code
+   * Example (Full blocking):
+   *
+   *			radio.writeBlocking(&buf,32,1000); //Wait up to 1 second to write 1 payload to the buffers
+   *			txStandBy(1000);     			   //Wait up to 1 second for the payload to send. Return 1 if ok, 0 if failed.
+   *					  				   		   //Blocks only until user timeout or success. Data flushed on fail.
+   * @endcode
+   * @note If used from within an interrupt, the interrupt should be disabled until completion, and sei(); called to
+   * enable millis().
+   * @see txStandBy()
+   * @see write()
+   * @see writeFast()
+   *
+   * @param buf Pointer to the data to be sent
+   * @param len Number of bytes to be sent
+   * @param timeout User defined timeout in milliseconds.
+   * @return True if the payload was loaded into the buffer successfully false if not
+   */
+  bool writeBlocking(const void* buf, uint8_t len, uint32_t timeout);
+
+  /**
    * Non-blocking write to the open writing pipe used for buffered writes
    *
    * @note Optimization: This function now leaves the CE pin high, so the radio
@@ -262,6 +291,52 @@ public:
    */
   void startFastWrite( const void* buf, uint8_t len, const bool multicast, bool startTx = 1 );
 
+  /**
+   * This function should be called as soon as transmission is finished to
+   * drop the radio back to STANDBY-I mode. If not issued, the radio will
+   * remain in STANDBY-II mode which, per the data sheet, is not a recommended
+   * operating mode.
+   *
+   * @note When transmitting data in rapid succession, it is still recommended by
+   * the manufacturer to drop the radio out of TX or STANDBY-II mode if there is
+   * time enough between sends for the FIFOs to empty. This is not required if auto-ack
+   * is enabled.
+   *
+   * Relies on built-in auto retry functionality.
+   *
+   * @code
+   * Example (Partial blocking):
+   *
+   *			radio.writeFast(&buf,32);
+   *			radio.writeFast(&buf,32);
+   *			radio.writeFast(&buf,32);  //Fills the FIFO buffers up
+   *			bool ok = txStandBy();     //Returns 0 if failed. 1 if success.
+   *					  				   //Blocks only until MAX_RT timeout or success. Data flushed on fail.
+   * @endcode
+   * @see txStandBy(unsigned long timeout)
+   * @return True if transmission is successful
+   *
+   */
+  bool txStandBy();
+
+  /**
+   * This function allows extended blocking and auto-retries per a user defined timeout
+   * @code
+   *	Fully Blocking Example:
+   *
+   *			radio.writeFast(&buf,32);
+   *			radio.writeFast(&buf,32);
+   *			radio.writeFast(&buf,32);   //Fills the FIFO buffers up
+   *			bool ok = txStandBy(1000);  //Returns 0 if failed after 1 second of retries. 1 if success.
+   *	//Blocks only until user defined timeout or success. Data flushed on fail.
+   * @endcode
+   * @note If used from within an interrupt, the interrupt should be disabled until completion, and sei(); called to enable millis().
+   * @param timeout Number of milliseconds to retry failed payloads
+   * @return True if transmission is successful
+   *
+   */
+  bool txStandBy(uint32_t timeout);
+
 private:
   uint32_t txRxDelay; /**< Var for adjusting delays depending on datarate */
 
@@ -282,6 +357,23 @@ private:
    * @return Current value of status register
    */
   uint8_t flush_tx(void);
+
+  /**
+   * This function is mainly used internally to take advantage of the auto payload
+   * re-use functionality of the chip, but can be beneficial to users as well.
+   *
+   * The function will instruct the radio to re-use the data in the FIFO buffers,
+   * and instructs the radio to re-send once the timeout limit has been reached.
+   * Used by writeFast and writeBlocking to initiate retries when a TX failure
+   * occurs. Retries are automatically initiated except with the standard write().
+   * This way, data is not flushed from the buffer until switching between modes.
+   *
+   * @note This is to be used AFTER auto-retry fails if wanting to resend
+   * using the built-in payload reuse features.
+   * After issuing reUseTX(), it will keep reending the same payload forever or until
+   * a payload is written to the FIFO, or a flush_tx command is given.
+   */
+  void reUseTX(void);
 };
 
 
