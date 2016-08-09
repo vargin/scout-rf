@@ -10,14 +10,13 @@
 #include "nRF24L01.h"
 #include "radio.h"
 
-uint8_t data[32] = {"_This is a message via NRF24L+!"};
+uint8_t data[6] = {"_PING"};
 const uint8_t registers[26] = {CONFIG, EN_AA, EN_RXADDR, SETUP_AW, SETUP_RETR, RF_CH, RF_SETUP, STATUS, OBSERVE_TX, CD,
                                RX_ADDR_P0, RX_ADDR_P1, RX_ADDR_P2, RX_ADDR_P3, RX_ADDR_P4, RX_ADDR_P5, TX_ADDR,
                                RX_PW_P0, RX_PW_P1, RX_PW_P2, RX_PW_P3, RX_PW_P4, RX_PW_P5, FIFO_STATUS, DYNPD,
                                FEATURE};
 const uint8_t pipe[5] = {0x7C, 0x68, 0x52, 0x4d, 0x54};
 const uint32_t timeoutPeriod = 3000;
-volatile uint32_t counter;
 
 void debug(const char *str, bool newLine = true) {
   while (*str) {
@@ -83,48 +82,19 @@ int main(void) {
 
     _delay_ms(2000);
 
-    // Change this to a higher or lower number. This is the number of payloads that will be sent.
-    uint32_t cycles = 1000;
+    for (uint32_t i = 0; i < 100; i++) {
+      // Change the first byte of the payload for identification
+      data[0] = i;
 
-    // Indicate to the other radio that we are starting, and provide the number of payloads that will be sent
-    unsigned long transferCMD[] = {'H', 'S', cycles};
-
-    radio.writeFast(&transferCMD, 12);
-
-    // If transfer initiation was successful, do the following
-    if (radio.txStandBy(timeoutPeriod)) {
-      bool timedOut = false;
-
-      for (uint32_t i = 0; i < cycles; i++) {
-        // Change the first byte of the payload for identification
-        data[0] = i;
-
-        // If retries are failing and the user defined timeout is exceeded, let's indicate a failure and set the fail
-        // count to maximum and break out of the for loop.
-        if (!radio.writeBlocking(&data, 32, timeoutPeriod)) {
-          timedOut = 1;
-          counter = cycles;
-          break;
-        }
-      }
-
-      // This should be called to wait for completion and put the radio in standby mode after transmission, returns 0 if
-      // data still in FIFO (timed out), 1 if success.
-      if (timedOut) {
-        // Partially blocking standby, blocks until success or max retries. FIFO flushed if auto timeout reached.
-        radio.txStandBy();
+      // If retries are failing and the user defined timeout is exceeded, let's indicate a failure and set the fail
+      // count to maximum and break out of the for loop.
+      if (!radio.writeBlocking(&data, 6, timeoutPeriod)) {
+        debug("Message timed out!");
+        break;
       } else {
-        // Standby, block until FIFO empty (sent) or user specified timeout reached. FIFO flushed if user timeout is
-        // reached.
-        radio.txStandBy(timeoutPeriod);
+        debug("Message successfully sent!");
       }
-
-    } else {
-      //If unsuccessful initiating transfer, exit and retry later
-      counter = cycles + 1;
     }
-
-    counter = 0;
   }
 #pragma clang diagnostic pop
 }

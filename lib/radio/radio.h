@@ -183,17 +183,6 @@ public:
   void stopListening(void);
 
   /**
-   * Write the transmit payload
-   *
-   * The size of data written is the fixed payload size, see getPayloadSize()
-   *
-   * @param buf Where to get the data
-   * @param len Number of bytes to be sent
-   * @return Current value of status register
-   */
-  uint8_t write_payload(const void* buf, uint8_t len, const uint8_t writeType);
-
-  /**
    * This will not block until the 3 FIFO buffers are filled with data.
    * Once the FIFOs are full, writeFast will simply wait for success or
    * timeout, and return 1 or 0 respectively. From a user perspective, just
@@ -339,6 +328,17 @@ public:
 
 private:
   uint32_t txRxDelay; /**< Var for adjusting delays depending on datarate */
+
+  /**
+   * Write the transmit payload
+   *
+   * The size of data written is the fixed payload size, see getPayloadSize()
+   *
+   * @param buf Where to get the data
+   * @param len Number of bytes to be sent
+   * @return Current value of status register
+   */
+  uint8_t write_payload(const void* buf, uint8_t len, const uint8_t writeType);
 
   void csnLow(void);
   void csnHigh(void);

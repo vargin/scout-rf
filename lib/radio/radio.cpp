@@ -60,13 +60,12 @@ bool Radio::setup(void) {
   //Power up by default when setup() is called.
   powerUp();
 
-
   // Enable PTX, do not write CE high so radio will remain in standby I mode ( 130us max to transition to RX or TX
   // instead of 1500us from powerUp ) PTX should use only 22uA of power.
   write_register(CONFIG, (read_register(CONFIG)) & ~_BV(PRIM_RX));
 
   // If setup is 0 or ff then there was no response from module.
-  return (setup != 0 && setup != 0xff);
+  return setup != 0 && setup != 0xff;
 }
 
 uint8_t Radio::get_status(void) {
@@ -169,51 +168,46 @@ void Radio::setChannel(uint8_t channel) {
 }
 
 void Radio::powerDown(void) {
-  // Guarantee CE is low on powerDown
-  //ce(LOW);
   write_register(CONFIG, read_register(CONFIG) & ~_BV(PWR_UP));
 }
 
-//Power up now. Radio will not power down unless instructed by MCU for config changes etc.
 void Radio::powerUp(void) {
   uint8_t cfg = read_register(CONFIG);
 
-  // if not powered up then power up and wait for the radio to initialize
-  if (!(cfg & _BV(PWR_UP))) {
-    write_register(CONFIG, cfg | _BV(PWR_UP));
-
-    // For nRF24L01+ to go from power down mode to TX or RX mode it must first pass through stand-by mode.
-    // There must be a delay of Tpd2stby (see Table 16.) after the nRF24L01+ leaves power down mode before
-    // the CEis set high. - Tpd2stby can be up to 5ms per the 1.0 datasheet.
-    _delay_ms(5);
+  // Return immediately if already powered up.
+  if (cfg & _BV(PWR_UP)) {
+    return;
   }
+
+  write_register(CONFIG, cfg | _BV(PWR_UP));
+
+  // For nRF24L01+ to go from power down mode to TX or RX mode it must first pass through stand-by mode.
+  // There must be a delay of Tpd2stby (see Table 16.) after the nRF24L01+ leaves power down mode before
+  // the CEis set high. - Tpd2stby can be up to 5ms per the 1.0 datasheet.
+  _delay_ms(5);
 }
 
 void Radio::setAutoAck(bool enable) {
-  if (enable) {
-    write_register(EN_AA, 0b111111);
-  } else {
-    write_register(EN_AA, 0);
-  }
+  write_register(EN_AA, enable ? 0b111111 : 0);
 }
 
-/****************************************************************************/
-
 void Radio::setAutoAck(uint8_t pipe, bool enable) {
-  if (pipe <= 6) {
-    uint8_t en_aa = read_register(EN_AA);
-    if (enable) {
-      en_aa |= _BV(pipe);
-    } else {
-      en_aa &= ~_BV(pipe);
-    }
-    write_register(EN_AA, en_aa);
+  if (pipe > 6) {
+    return;
   }
+
+  uint8_t en_aa = read_register(EN_AA);
+  if (enable) {
+    en_aa |= _BV(pipe);
+  } else {
+    en_aa &= ~_BV(pipe);
+  }
+
+  write_register(EN_AA, en_aa);
 }
 
 void Radio::openWritingPipe(const uint8_t *address) {
-  // Note that AVR 8-bit uC's store this LSB first, and the NRF24L01(+)
-  // expects it LSB first too, so we're good.
+  // Note that AVR 8-bit uC's store this LSB first, and the NRF24L01(+) expects it LSB first too, so we're good.
   write_register(RX_ADDR_P0, address, ADDRESS_WIDTH);
   write_register(TX_ADDR, address, ADDRESS_WIDTH);
   write_register(RX_PW_P0, PAYLOAD_SIZE);
@@ -233,6 +227,82 @@ void Radio::stopListening(void) {
 
   // Enable RX on pipe0.
   write_register(EN_RXADDR, read_register(EN_RXADDR) | _BV(pgm_read_byte(&child_pipe_enable[0])));
+}
+
+bool Radio::writeFast(const void *buf, uint8_t len, const bool multicast) {
+  // Let's block if FIFO is full or max number of retries is reached. Return 0 so the user can control the retries
+  // manually. The radio will auto-clear everything in the FIFO as long as CE remains high.
+  while (get_status() & _BV(TX_FULL)) {
+    // Max number of retries is reached, let's clear the flag and return 0.
+    if (get_status() & _BV(MAX_RT)) {
+      write_register(STATUS, _BV(MAX_RT));
+      return 0;
+    }
+  }
+
+  write_payload(buf, len, multicast ? W_TX_PAYLOAD_NO_ACK : W_TX_PAYLOAD);
+
+  return 1;
+}
+
+bool Radio::writeFast(const void *buf, uint8_t len) {
+  return writeFast(buf, len, 0);
+}
+
+bool Radio::writeBlocking(const void *buf, uint8_t len, uint32_t timeout) {
+  uint32_t elapsed = 0;
+
+  while (get_status() & _BV(TX_FULL)) {
+    if (get_status() & _BV(MAX_RT)) {
+      // Set re-transmit and clear the MAX_RT interrupt flag.
+      reUseTX();
+
+      // If this payload has exceeded the user-defined timeout, exit and return 0.
+      if (elapsed > timeout) {
+        return 0;
+      }
+    }
+
+    _delay_ms(100);
+    elapsed += 100;
+  }
+
+  write_payload(buf, len, W_TX_PAYLOAD);
+
+  return 1;
+}
+
+bool Radio::txStandBy() {
+  while (!(read_register(FIFO_STATUS) & _BV(TX_EMPTY))) {
+    if (get_status() & _BV(MAX_RT)) {
+      write_register(STATUS, _BV(MAX_RT));
+      // Non blocking, flush the data.
+      flush_tx();
+      return 0;
+    }
+  }
+
+  return 1;
+}
+
+bool Radio::txStandBy(uint32_t timeout) {
+  uint32_t elapsed = 0;
+
+  while (!(read_register(FIFO_STATUS) & _BV(TX_EMPTY))) {
+    if (get_status() & _BV(MAX_RT)) {
+      write_register(STATUS, _BV(MAX_RT));
+
+      if (elapsed >= timeout) {
+        flush_tx();
+        return 0;
+      }
+    }
+
+    elapsed += 200;
+    _delay_ms(200);
+  }
+
+  return 1;
 }
 
 uint8_t Radio::write_payload(const void *buf, uint8_t data_len, const uint8_t writeType) {
@@ -256,97 +326,6 @@ uint8_t Radio::write_payload(const void *buf, uint8_t data_len, const uint8_t wr
 
   return status;
 }
-
-bool Radio::writeFast(const void *buf, uint8_t len, const bool multicast) {
-  //Block until the FIFO is NOT full.
-  //Keep track of the MAX retries and set auto-retry if seeing failures
-  //Return 0 so the user can control the retrys and set a timer or failure counter if required
-  //The radio will auto-clear everything in the FIFO as long as CE remains high
-
-  // Blocking only if FIFO is full. This will loop and block until TX is successful or fail
-  while ((get_status() & (_BV(TX_FULL)))) {
-    if (get_status() & _BV(MAX_RT)) {
-      // Clear max retry flag.
-      write_register(STATUS, _BV(MAX_RT));
-
-      // The previous payload has been retransmitted. From the user perspective, if you get a 0, just keep trying to
-      // send the same payload.
-      return 0;
-    }
-  }
-
-  write_payload(buf, len, multicast ? W_TX_PAYLOAD_NO_ACK : W_TX_PAYLOAD);
-
-  return 1;
-}
-
-bool Radio::writeFast(const void *buf, uint8_t len) {
-  return writeFast(buf, len, 0);
-}
-
-//For general use, the interrupt flags are not important to clear
-bool Radio::writeBlocking(const void *buf, uint8_t len, uint32_t timeout) {
-  //Block until the FIFO is NOT full.
-  //Keep track of the MAX retries and set auto-retry if seeing failures
-  //This way the FIFO will fill up and allow blocking until packets go through
-  //The radio will auto-clear everything in the FIFO as long as CE remains high
-
-  uint32_t elapsed = 0;
-
-  // Blocking only if FIFO is full. This will loop and block until TX is successful or timeout.
-  while ((get_status() & (_BV(TX_FULL)))) {
-    // If MAX Retries have been reached.
-    if (get_status() & _BV(MAX_RT)) {
-      // Set re-transmit and clear the MAX_RT interrupt flag.
-      reUseTX();
-
-      //If this payload has exceeded the user-defined timeout, exit and return 0.
-      if (elapsed > timeout) {
-        return 0;
-      }
-    }
-
-    _delay_ms(100);
-    elapsed += 100;
-  }
-
-  write_payload(buf, len, W_TX_PAYLOAD);
-
-  return 1;
-}
-
-bool Radio::txStandBy() {
-  while (!(read_register(FIFO_STATUS) & _BV(TX_EMPTY))) {
-    if (get_status() & _BV(MAX_RT)) {
-      write_register(STATUS, _BV(MAX_RT));
-      //Non blocking, flush the data
-      flush_tx();
-      return 0;
-    }
-  }
-
-  return 1;
-}
-
-bool Radio::txStandBy(uint32_t timeout) {
-  uint32_t elapsed = 0;
-
-  while (!(read_register(FIFO_STATUS) & _BV(TX_EMPTY))) {
-    if (get_status() & _BV(MAX_RT)) {
-      write_register(STATUS, _BV(MAX_RT));
-      if (elapsed >= timeout) {
-        flush_tx();
-        return 0;
-      }
-    }
-
-    elapsed += 200;
-    _delay_ms(200);
-  }
-
-  return 1;
-}
-
 
 void Radio::csnLow(void) {
   // Discharge SCK->CSN RC.
