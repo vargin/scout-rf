@@ -172,6 +172,51 @@ public:
   void openWritingPipe(const uint8_t *address);
 
   /**
+   * Open a pipe for reading
+   *
+   * Up to 6 pipes can be open for reading at once.  Open all the required
+   * reading pipes, and then call startListening().
+   *
+   * @see openWritingPipe
+   * @see setAddressWidth
+   *
+   * @note Pipes 0 and 1 will store a full 5-byte address. Pipes 2-5 will technically
+   * only store a single byte, borrowing up to 4 additional bytes from pipe #1 per the
+   * assigned address width.
+   * @warning Pipes 1-5 should share the same address, except the first byte.
+   * Only the first byte in the array should be unique, e.g.
+   * @code
+   *   uint8_t addresses[][6] = {"1Node","2Node"};
+   *   openReadingPipe(1,addresses[0]);
+   *   openReadingPipe(2,addresses[1]);
+   * @endcode
+   *
+   * @warning Pipe 0 is also used by the writing pipe.  So if you open
+   * pipe 0 for reading, and then startListening(), it will overwrite the
+   * writing pipe.  Ergo, do an openWritingPipe() again before write().
+   *
+   * @param address The 24, 32 or 40 bit address of the pipe to open.
+   */
+  void openReadingPipe(const uint8_t *address);
+
+  /**
+   * Start listening on the pipes opened for reading.
+   *
+   * 1. Be sure to call openReadingPipe() first.
+   * 2. Do not call write() while in this mode, without first calling stopListening().
+   * 3. Call available() to check for incoming traffic, and read() to get it.
+   *
+   * @code
+   * Open reading pipe 1 using address CCCECCCECC
+   *
+   * byte address[] = { 0xCC,0xCE,0xCC,0xCE,0xCC };
+   * radio.openReadingPipe(1,address);
+   * radio.startListening();
+   * @endcode
+   */
+  void startListening(void);
+
+  /**
    * Stop listening for incoming messages, and switch to transmit mode.
    *
    * Do this before calling write().

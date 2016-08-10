@@ -1,5 +1,4 @@
 #include <avr/io.h>
-#include <avr/pgmspace.h>
 #include <util/delay.h>
 
 #include "nRF24L01.h"
@@ -10,9 +9,6 @@
 #define SPI_MOMI 0
 
 #include "../halfduplexspi/halfduplexspi.h"
-
-static const uint8_t child_pipe_enable[]
-    PROGMEM = {ERX_P0, ERX_P1, ERX_P2, ERX_P3, ERX_P4, ERX_P5};
 
 static const uint8_t PAYLOAD_SIZE = 32;
 static const uint8_t ADDRESS_WIDTH = 5;
@@ -211,6 +207,22 @@ void Radio::openWritingPipe(const uint8_t *address) {
   write_register(RX_ADDR_P0, address, ADDRESS_WIDTH);
   write_register(TX_ADDR, address, ADDRESS_WIDTH);
   write_register(RX_PW_P0, PAYLOAD_SIZE);
+  write_register(EN_RXADDR, read_register(EN_RXADDR) | _BV(ERX_P0));
+}
+
+void Radio::openReadingPipe(const uint8_t *address) {
+  write_register(RX_ADDR_P1, address, ADDRESS_WIDTH);
+  write_register(RX_PW_P1, PAYLOAD_SIZE);
+  write_register(EN_RXADDR, read_register(EN_RXADDR) | _BV(ERX_P1));
+}
+
+void Radio::startListening(void) {
+  write_register(CONFIG, read_register(CONFIG) | _BV(PRIM_RX));
+  write_register(STATUS, _BV(RX_DR) | _BV(TX_DS) | _BV(MAX_RT));
+
+  if (read_register(FEATURE) & _BV(EN_ACK_PAY)) {
+    flush_tx();
+  }
 }
 
 void Radio::stopListening(void) {
@@ -224,9 +236,6 @@ void Radio::stopListening(void) {
   // for 3 pins solution TX mode is only left with additional powerDown/powerUp cycle.
   powerDown();
   powerUp();
-
-  // Enable RX on pipe0.
-  write_register(EN_RXADDR, read_register(EN_RXADDR) | _BV(pgm_read_byte(&child_pipe_enable[0])));
 }
 
 bool Radio::writeFast(const void *buf, uint8_t len, const bool multicast) {

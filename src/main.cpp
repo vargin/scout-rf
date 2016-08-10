@@ -2,11 +2,6 @@
 #include <avr/io.h>
 #include <util/delay.h>
 #include "utils.h"
-
-//#define SPI_PORT PORTB
-//#define SPI_SCK 2
-//#define SPI_MOMI 0
-
 #include "nRF24L01.h"
 #include "radio.h"
 
@@ -80,11 +75,9 @@ int main(void) {
       TxByte('\n');
     }
 
-    _delay_ms(2000);
-
-    for (uint32_t i = 0; i < 100; i++) {
+    for (uint32_t i = 0; i < 10; i++) {
       // Change the first byte of the payload for identification
-      data[0] = i;
+      data[0] = i + 60;
 
       // If retries are failing and the user defined timeout is exceeded, let's indicate a failure and set the fail
       // count to maximum and break out of the for loop.
@@ -94,7 +87,11 @@ int main(void) {
       } else {
         debug("Message successfully sent!");
       }
+
+      _delay_ms(500);
     }
+
+    _delay_ms(2000);
   }
 #pragma clang diagnostic pop
 }
