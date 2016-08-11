@@ -371,6 +371,41 @@ public:
    */
   bool txStandBy(uint32_t timeout);
 
+  /**
+   * Check whether there are bytes available to be read
+   * @code
+   * if(radio.available()){
+   *   radio.read(&data,sizeof(data));
+   * }
+   * @endcode
+   * @return True if there is a payload available, false if none is
+   */
+  bool available(void);
+
+  /**
+   * Read the available payload
+   *
+   * The size of data read is the fixed payload size, see getPayloadSize()
+   *
+   * @note I specifically chose 'void*' as a data type to make it easier
+   * for beginners to use.  No casting needed.
+   *
+   * @note No longer boolean. Use available to determine if packets are
+   * available. Interrupt flags are now cleared during reads instead of
+   * when calling available().
+   *
+   * @param buf Pointer to a buffer where the data should be written
+   * @param len Maximum number of bytes to read into the buffer
+   *
+   * @code
+   * if(radio.available()){
+   *   radio.read(&data,sizeof(data));
+   * }
+   * @endcode
+   * @return No return value. Use available().
+   */
+  void read(void* buf, uint8_t len);
+
 private:
   uint32_t txRxDelay; /**< Var for adjusting delays depending on datarate */
 
@@ -384,6 +419,17 @@ private:
    * @return Current value of status register
    */
   uint8_t write_payload(const void* buf, uint8_t len, const uint8_t writeType);
+
+  /**
+   * Read the receive payload
+   *
+   * The size of data read is the fixed payload size, see getPayloadSize()
+   *
+   * @param buf Where to put the data
+   * @param len Maximum number of bytes to read
+   * @return Current value of status register
+   */
+  uint8_t read_payload(void* buf, uint8_t len);
 
   void csnLow(void);
   void csnHigh(void);

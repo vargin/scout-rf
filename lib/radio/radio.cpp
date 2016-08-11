@@ -3,18 +3,13 @@
 
 #include "nRF24L01.h"
 #include "radio.h"
-
-#define SPI_PORT PORTB
-#define SPI_SCK 2
-#define SPI_MOMI 0
-
-#include "../halfduplexspi/halfduplexspi.h"
+#include "halfduplexspi.h"
 
 static const uint8_t PAYLOAD_SIZE = 32;
 static const uint8_t ADDRESS_WIDTH = 5;
 
 bool Radio::setup(void) {
-  spi_setup();
+  HalfDuplexSPI::setup();
 
   csnHigh();
 
@@ -67,7 +62,7 @@ bool Radio::setup(void) {
 uint8_t Radio::get_status(void) {
   csnLow();
 
-  uint8_t status = spi_byte(NOP);
+  uint8_t status = HalfDuplexSPI::byte(NOP);
 
   csnHigh();
 
@@ -77,10 +72,10 @@ uint8_t Radio::get_status(void) {
 uint8_t Radio::read_register(uint8_t reg, uint8_t *buf, uint8_t len) {
   csnLow();
 
-  uint8_t status = spi_byte(R_REGISTER | (REGISTER_MASK & reg));
+  uint8_t status = HalfDuplexSPI::byte(R_REGISTER | (REGISTER_MASK & reg));
 
   while (len--) {
-    *buf++ = spi_byte(0xff);
+    *buf++ = HalfDuplexSPI::byte(0xff);
   }
 
   csnHigh();
@@ -91,8 +86,8 @@ uint8_t Radio::read_register(uint8_t reg, uint8_t *buf, uint8_t len) {
 uint8_t Radio::read_register(uint8_t reg) {
   csnLow();
 
-  spi_byte(R_REGISTER | (REGISTER_MASK & reg));
-  uint8_t result = spi_byte(0xff);
+  HalfDuplexSPI::byte(R_REGISTER | (REGISTER_MASK & reg));
+  uint8_t result = HalfDuplexSPI::byte(0xff);
 
   csnHigh();
 
@@ -102,9 +97,9 @@ uint8_t Radio::read_register(uint8_t reg) {
 uint8_t Radio::write_register(uint8_t reg, const uint8_t *buf, uint8_t len) {
   csnLow();
 
-  uint8_t status = spi_byte(W_REGISTER | (REGISTER_MASK & reg));
+  uint8_t status = HalfDuplexSPI::byte(W_REGISTER | (REGISTER_MASK & reg));
   while (len--) {
-    spi_byte(*buf++);
+    HalfDuplexSPI::byte(*buf++);
   }
 
   csnHigh();
@@ -115,8 +110,8 @@ uint8_t Radio::write_register(uint8_t reg, const uint8_t *buf, uint8_t len) {
 uint8_t Radio::write_register(uint8_t reg, uint8_t value) {
   csnLow();
 
-  uint8_t status = spi_byte(W_REGISTER | (REGISTER_MASK & reg));
-  spi_byte(value);
+  uint8_t status = HalfDuplexSPI::byte(W_REGISTER | (REGISTER_MASK & reg));
+  HalfDuplexSPI::byte(value);
 
   csnHigh();
 
@@ -314,6 +309,16 @@ bool Radio::txStandBy(uint32_t timeout) {
   return 1;
 }
 
+bool Radio::available() {
+  return !(read_register(FIFO_STATUS) & _BV(RX_EMPTY));
+}
+
+void Radio::read(void *buf, uint8_t len) {
+  read_payload(buf, len);
+
+  write_register(STATUS, _BV(RX_DR) | _BV(MAX_RT) | _BV(TX_DS));
+}
+
 uint8_t Radio::write_payload(const void *buf, uint8_t data_len, const uint8_t writeType) {
   const uint8_t *current = reinterpret_cast<const uint8_t *>(buf);
 
@@ -322,13 +327,35 @@ uint8_t Radio::write_payload(const void *buf, uint8_t data_len, const uint8_t wr
 
   csnLow();
 
-  uint8_t status = spi_byte(writeType);
+  uint8_t status = HalfDuplexSPI::byte(writeType);
   while (data_len--) {
-    spi_byte(*current++);
+    HalfDuplexSPI::byte(*current++);
   }
 
   while (blank_len--) {
-    spi_byte(0);
+    HalfDuplexSPI::byte(0);
+  }
+
+  csnHigh();
+
+  return status;
+}
+
+uint8_t Radio::read_payload(void *buf, uint8_t data_len) {
+  uint8_t *current = reinterpret_cast<uint8_t *>(buf);
+
+  data_len = data_len > PAYLOAD_SIZE ? PAYLOAD_SIZE : data_len;
+  uint8_t blank_len = PAYLOAD_SIZE - data_len;
+
+  csnLow();
+
+  uint8_t status = HalfDuplexSPI::byte(R_RX_PAYLOAD);
+  while (data_len--) {
+    *current++ = HalfDuplexSPI::byte(0xFF);
+  }
+
+  while (blank_len--) {
+    HalfDuplexSPI::byte(0xff);
   }
 
   csnHigh();
@@ -351,7 +378,7 @@ void Radio::csnHigh(void) {
 uint8_t Radio::flush_rx(void) {
   csnLow();
 
-  uint8_t status = spi_byte(FLUSH_RX);
+  uint8_t status = HalfDuplexSPI::byte(FLUSH_RX);
 
   csnHigh();
 
@@ -361,7 +388,7 @@ uint8_t Radio::flush_rx(void) {
 uint8_t Radio::flush_tx(void) {
   csnLow();
 
-  uint8_t status = spi_byte(FLUSH_TX);
+  uint8_t status = HalfDuplexSPI::byte(FLUSH_TX);
 
   csnHigh();
 
@@ -372,6 +399,6 @@ void Radio::reUseTX() {
   // Clear max retry flag.
   write_register(STATUS, _BV(MAX_RT));
   csnLow();
-  spi_byte(REUSE_TX_PL);
+  HalfDuplexSPI::byte(REUSE_TX_PL);
   csnHigh();
 }
