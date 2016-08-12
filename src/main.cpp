@@ -44,7 +44,7 @@ initADC() {
   // DIDR0 |= ADC2D;
 
   // Enable ADC and interruptions.
-  ADCSRA |= _BV(ADEN) | _BV(ADIE) | _BV(ADATE);
+  ADCSRA |= _BV(ADEN) | _BV(ADIE);
 }
 
 void debug(const uint8_t *str, bool newLine = true) {
@@ -169,27 +169,64 @@ int main(void) {
 
         debug("Message received: ");
         debug(rxData);
+
+        radio.openWritingPipe(txPipe);
+        radio.openReadingPipe(rxPipe);
+        radio.stopListening();
+
+        if (!radio.writeBlocking(&data, 6, timeoutPeriod)) {
+          debug("Message timed out!");
+        } else {
+          debug("Message successfully sent!");
+        }
+
+        radio.openWritingPipe(txPipe);
+        radio.openReadingPipe(rxPipe);
+        radio.startListening();
       } else {
         debug("No data is received!");
       }
     } else {
-      // Change the first byte of the payload for identification
-      data[0] = counter + 60;
+      if (analogResult > 300) {
+        for (counter = 0; counter < 10; counter++) {
+          radio.openWritingPipe(txPipe);
+          radio.openReadingPipe(rxPipe);
+          radio.stopListening();
 
-      // If retries are failing and the user defined timeout is exceeded, let's indicate a failure and set the fail
-      // count to maximum and break out of the for loop.
-      if (!radio.writeBlocking(&data, 6, timeoutPeriod)) {
-        debug("Message timed out!");
-      } else {
-        debug("Message successfully sent!");
+          // Change the first byte of the payload for identification
+          data[0] = counter + 48;
+
+          // If retries are failing and the user defined timeout is exceeded, let's indicate a failure and set the fail
+          // count to maximum and break out of the for loop.
+          if (!radio.writeBlocking(&data, 6, timeoutPeriod)) {
+            debug("Message timed out!");
+          } else {
+            debug("Message successfully sent!");
+          }
+
+          radio.openWritingPipe(txPipe);
+          radio.openReadingPipe(rxPipe);
+          radio.startListening();
+
+          if (radio.available()) {
+            radio.read(&rxData, 6);
+
+            debug("Message received: ");
+            debug(rxData);
+          } else {
+            debug("No data is received!");
+          }
+
+          _delay_ms(1000);
+        }
       }
 
       debug(analogResult);
     }
 
-    counter++;
+    startConversion();
 
-    _delay_ms(1000);
+    _delay_ms(500);
   }
 #pragma clang diagnostic pop
 }
