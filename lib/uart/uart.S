@@ -12,8 +12,8 @@
 #else
 #define UART_Port PORTB
 #endif
-#define UART_Tx 3
-#define UART_Rx 3
+#define UART_Tx 4
+#define UART_Rx 4
 
 #define delayArg r22
 
