@@ -72,7 +72,7 @@ int main(void) {
 #pragma clang diagnostic ignored "-Wmissing-noreturn"
   while (true) {
     if (interrupt) {
-      debug("INTERRUPT has occurred");
+      debug("INTERRUPT");
       interrupt = false;
 
       radio.powerUp();
@@ -88,9 +88,9 @@ int main(void) {
         // If retries are failing and the user defined timeout is exceeded, let's indicate a failure and set the fail
         // count to maximum and break out of the for loop.
         if (!radio.writeBlocking(&data, 6, timeoutPeriod)) {
-          debug("Message timed out!");
+          debug("Message has not been sent");
         } else {
-          debug("Message successfully sent!");
+          debug("Message has been sent!");
         }
 
         radio.openWritingPipe(txPipe);
@@ -100,12 +100,12 @@ int main(void) {
         if (radio.available()) {
           radio.read(&rxData, 6);
 
-          debug("Message received: ");
+          debug("Message has been received: ");
           debug(rxData);
 
           break;
         } else {
-          debug("No data is received!");
+          debug("No data is available!");
         }
 
         _delay_ms(1000);
