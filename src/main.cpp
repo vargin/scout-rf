@@ -11,8 +11,10 @@ ISR(PCINT0_vect) {
   interrupt = true;
 }
 
-uint8_t data[6] = {"_PING"};
-uint8_t rxData[6] = {"-----"};
+// {"PING"} = {80, 73, 78, 71, 0}.
+const uint8_t data[5] = {80, 73, 78, 71, 0};
+// {"PONG"} = {80, 79, 78, 71, 0}.
+uint8_t rxData[5] = {0, 0, 0, 0, 0};
 
 const uint8_t txPipe[5] = {0x7C, 0x68, 0x52, 0x4d, 0x54};
 const uint8_t rxPipe[5] = {0x71, 0xCD, 0xAB, 0xCD, 0xAB};
@@ -57,9 +59,9 @@ int main(void) {
   radio.setOutputPower(OutputPower::HIGH);
 
   if (radio.setDataRate(DataRate::RATE_250KBPS)) {
-    debug("True + Module!");
+    debug("nRF24L01+ is verified!");
   } else {
-    debug("Panic!!!! It's not true + module");
+    debug("This is not nRF24L01+ module!");
   }
 
   radio.setAutoAck(1);
@@ -77,17 +79,16 @@ int main(void) {
 
       radio.powerUp();
 
+      bool isPongReceived = false;
+
       for (uint8_t counter = 0; counter < 10; counter++) {
         radio.openWritingPipe(txPipe);
         radio.openReadingPipe(rxPipe);
         radio.stopListening();
 
-        // Change the first byte of the payload for identification
-        data[0] = counter + 48;
-
         // If retries are failing and the user defined timeout is exceeded, let's indicate a failure and set the fail
         // count to maximum and break out of the for loop.
-        if (!radio.writeBlocking(&data, 6, timeoutPeriod)) {
+        if (!radio.writeBlocking(&data, 5, timeoutPeriod)) {
           debug("Message has not been sent");
         } else {
           debug("Message has been sent!");
@@ -98,12 +99,21 @@ int main(void) {
         radio.startListening();
 
         if (radio.available()) {
-          radio.read(&rxData, 6);
+          radio.read(&rxData, 5);
 
           debug("Message has been received: ");
           debug(rxData);
 
-          break;
+          // {"PONG"} = {80, 79, 78, 71, 0}.
+          if (rxData[0] == 80 && rxData[1] == 79 && rxData[2] == 78 && rxData[3] == 71 && rxData[4] == 0) {
+            isPongReceived = true;
+          }
+
+          rxData[0] = rxData[1] = rxData[2] = rxData[3] = rxData[4] = 0;
+
+          if (isPongReceived) {
+            break;
+          }
         } else {
           debug("No data is available!");
         }
@@ -114,9 +124,9 @@ int main(void) {
       radio.stopListening();
       radio.powerDown();
 
-      // Let's wait 5000 ms before going sleep again. Just wanted to have enough time to measure current in
+      // Let's wait 3000 ms before going sleep again. Just wanted to have enough time to measure current in
       // non-sleep mode :).
-      _delay_ms(5000);
+      _delay_ms(3000);
     } else {
       debug("NO INTERRUPT");
     }
