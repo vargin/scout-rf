@@ -5,7 +5,20 @@
 #include "halfduplexspi.h"
 #include "radio.h"
 
+/**
+ * PB 0 - SPI MOMI
+ * PB 1 -
+ * PB 2 - SPI SCK
+ * PB 3 - External interrupt from light sensor
+ * PB 4 - UART
+ * PB 5 - Reset
+ */
+
+#define DEBUG 1
+
 volatile bool interrupt = false;
+
+uint8_t lightOnCounter = 0;
 
 ISR(PCINT0_vect) {
   interrupt = true;
@@ -22,6 +35,7 @@ const uint8_t rxPipe[5] = {0x71, 0xCD, 0xAB, 0xCD, 0xAB};
 const uint32_t timeoutPeriod = 3000;
 
 void debug(const uint8_t *str, bool newLine = true) {
+#ifdef DEBUG
   while (*str) {
     TxByte(*str++);
   }
@@ -29,10 +43,60 @@ void debug(const uint8_t *str, bool newLine = true) {
   if (newLine) {
     TxByte('\n');
   }
+#endif
 }
 
 void debug(const char *str, bool newLine = true) {
   debug((const uint8_t *) str, newLine);
+}
+
+void sendPing(Radio radio) {
+  radio.powerUp();
+
+  bool isPongReceived = false;
+
+  for (uint8_t counter = 0; counter < 10; counter++) {
+    radio.openWritingPipe(txPipe);
+    radio.openReadingPipe(rxPipe);
+    radio.stopListening();
+
+    // If retries are failing and the user defined timeout is exceeded, let's indicate a failure and set the fail
+    // count to maximum and break out of the for loop.
+    if (!radio.writeBlocking(&data, 5, timeoutPeriod)) {
+      debug("Message has not been sent");
+    } else {
+      debug("Message has been sent!");
+    }
+
+    radio.openWritingPipe(txPipe);
+    radio.openReadingPipe(rxPipe);
+    radio.startListening();
+
+    if (radio.available()) {
+      radio.read(&rxData, 5);
+
+      debug("Message has been received: ");
+      debug(rxData);
+
+      // {"PONG"} = {80, 79, 78, 71, 0}.
+      if (rxData[0] == 80 && rxData[1] == 79 && rxData[2] == 78 && rxData[3] == 71 && rxData[4] == 0) {
+        isPongReceived = true;
+      }
+
+      rxData[0] = rxData[1] = rxData[2] = rxData[3] = rxData[4] = 0;
+
+      if (isPongReceived) {
+        break;
+      }
+    } else {
+      debug("No data is available!");
+    }
+
+    _delay_ms(1000);
+  }
+
+  radio.stopListening();
+  radio.powerDown();
 }
 
 int main(void) {
@@ -75,61 +139,35 @@ int main(void) {
   while (true) {
     if (interrupt) {
       debug("INTERRUPT");
-      interrupt = false;
 
-      radio.powerUp();
-
-      bool isPongReceived = false;
-
-      for (uint8_t counter = 0; counter < 10; counter++) {
-        radio.openWritingPipe(txPipe);
-        radio.openReadingPipe(rxPipe);
-        radio.stopListening();
-
-        // If retries are failing and the user defined timeout is exceeded, let's indicate a failure and set the fail
-        // count to maximum and break out of the for loop.
-        if (!radio.writeBlocking(&data, 5, timeoutPeriod)) {
-          debug("Message has not been sent");
-        } else {
-          debug("Message has been sent!");
-        }
-
-        radio.openWritingPipe(txPipe);
-        radio.openReadingPipe(rxPipe);
-        radio.startListening();
-
-        if (radio.available()) {
-          radio.read(&rxData, 5);
-
-          debug("Message has been received: ");
-          debug(rxData);
-
-          // {"PONG"} = {80, 79, 78, 71, 0}.
-          if (rxData[0] == 80 && rxData[1] == 79 && rxData[2] == 78 && rxData[3] == 71 && rxData[4] == 0) {
-            isPongReceived = true;
-          }
-
-          rxData[0] = rxData[1] = rxData[2] = rxData[3] = rxData[4] = 0;
-
-          if (isPongReceived) {
-            break;
-          }
-        } else {
-          debug("No data is available!");
-        }
-
-        _delay_ms(1000);
-      }
-
-      radio.stopListening();
-      radio.powerDown();
-
-      // Let's wait 3000 ms before going sleep again. Just wanted to have enough time to measure current in
-      // non-sleep mode :).
-      _delay_ms(3000);
+      sendPing(radio);
     } else {
       debug("NO INTERRUPT");
     }
+
+    lightOnCounter = 0;
+
+    // Don't go sleep if light is on by default.
+    while(!(PINB & _BV(PINB3))) {
+      debug("Light is still on....");
+      _delay_ms(1000);
+
+      // If the light is on more than 10 sec, something is wrong let's send additional ping every minute to draw
+      // attention.
+      if (lightOnCounter > 10) {
+        debug("Panic ping sending...");
+        _delay_ms(60000);
+        sendPing(radio);
+
+        if (lightOnCounter > 200) {
+          lightOnCounter = 0;
+        }
+      }
+
+      lightOnCounter++;
+    }
+
+    interrupt = false;
 
     debug("Sleeping...");
 
